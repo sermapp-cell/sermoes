@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Sermões" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#1c1c1e" />
+<title>Sermões</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--mut:#8e8e93;--line:#e5e5ea;--acc:#e0a100;--card:#f2f2f7;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#f2f2f7;--line:#2c2c2e;--card:#1c1c1e}}
+html{font-size:calc(17px * var(--fs,1))}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif}
+button{font:inherit;background:none;border:0;color:var(--acc);padding:.4rem .6rem;cursor:pointer}
+input,textarea,select{font:inherit;color:inherit;background:none;border:0;outline:0;width:100%}
+textarea{resize:none;overflow:hidden;line-height:1.5}
+.center{min-height:100dvh;display:grid;place-content:center;text-align:center;gap:1rem}
+.primary{background:var(--acc);color:#000;border-radius:.7rem;padding:.7rem 1.2rem;font-weight:600}
+.bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:calc(env(safe-area-inset-top) + .4rem) .6rem .4rem;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.bar h1{font-size:1.6rem;margin:0}
+.item{display:flex;justify-content:space-between;align-items:center;padding:.8rem 1rem;border-bottom:1px solid var(--line);cursor:pointer}
+.item small{display:block;color:var(--mut);font-size:.8rem}
+.fab{position:fixed;right:1.2rem;bottom:calc(env(safe-area-inset-bottom) + 1.2rem);width:3.4rem;height:3.4rem;border-radius:50%;background:var(--acc);color:#000;font-size:1.6rem}
+main{max-width:60rem;margin:auto;padding:1rem 1rem 6rem}
+.title{font-size:1.8rem;font-weight:700;margin-bottom:.5rem}
+.topic{border-left:2px solid var(--line);margin:.4rem 0;padding-left:.4rem}
+.thead{display:flex;align-items:center}
+.thead input{font-weight:700}
+.l0>.thead input{font-size:1.3rem}
+.l1>.thead input{font-size:1.1rem}
+.chev{color:var(--mut);width:1.8rem;padding:0}
+.tbody{padding-left:1.4rem}
+.content{white-space:pre-wrap;line-height:1.6;margin:.3rem 0}
+.content a{color:var(--acc);text-decoration:underline;cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:.3rem}
+.chips button{background:var(--card);border-radius:1rem;font-size:.85rem}
+.add{font-size:.9rem}
+.timer{display:flex;align-items:center;gap:.4rem;padding:.2rem .6rem;border-radius:1rem;background:var(--card)}
+.timer .clock{font-variant-numeric:tabular-nums;font-weight:700;color:var(--fg);font-size:1.1rem}
+.timer small{color:var(--mut);font-size:.75rem}
+.timer select{width:auto;font-size:.8rem}
+.timer.warn{background:#ffcc00}.timer.warn *{color:#000}
+.timer.over{background:#ff3b30;animation:pulse 1s infinite}.timer.over *{color:#fff}
+@keyframes pulse{50%{opacity:.6}}
+.sheet{position:fixed;inset:0;background:#0007;display:flex;align-items:flex-end;z-index:10}
+.sheet>div{background:var(--bg);width:100%;max-height:70dvh;overflow:auto;padding:1.2rem 1.2rem calc(env(safe-area-inset-bottom) + 1.2rem);border-radius:1rem 1rem 0 0;line-height:1.6}
+@media (min-width:768px){.sheet{justify-content:flex-end;align-items:stretch}.sheet>div{width:24rem;max-height:none;border-radius:0}}
+</style>
+</head>
+<body>
+<div id="root"><p class="center">Carregando…</p></div>
+
+<script type="module">
+// ====== SUBSTITUA PELOS SEUS VALORES DO FIREBASE ======
+const firebaseConfig = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU-PROJETO.firebaseapp.com",
+  projectId: "SEU-PROJETO",
+  appId: "SEU_APP_ID"
+};
+// ======================================================
+
+import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { initializeFirestore, persistentLocalCache, collection, doc, onSnapshot, orderBy, query, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const html = htm.bind(React.createElement);
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const provider = new GoogleAuthProvider();
+const db = initializeFirestore(fbApp, { localCache: persistentLocalCache() });
+
+/* ---------- Bíblia ---------- */
+const BOOKS = "genesis:gn,genesis|exodus:ex,exodo|leviticus:lv,levitico|numbers:nm,numeros|deuteronomy:dt,deuteronomio|joshua:js,josue|judges:jz,juizes|ruth:rt,rute|1 samuel:1sm,1samuel|2 samuel:2sm,2samuel|1 kings:1rs,1reis|2 kings:2rs,2reis|1 chronicles:1cr,1cronicas|2 chronicles:2cr,2cronicas|ezra:ed,esdras|nehemiah:ne,neemias|esther:et,ester|job:job|psalms:sl,salmo,salmos|proverbs:pv,proverbios|ecclesiastes:ec,eclesiastes|song of solomon:ct,cantares|isaiah:is,isaias|jeremiah:jr,jeremias|lamentations:lm,lamentacoes|ezekiel:ez,ezequiel|daniel:dn,daniel|hosea:os,oseias|joel:jl,joel|amos:am,amos|obadiah:ob,obadias|jonah:jn,jonas|micah:mq,miqueias|nahum:na,naum|habakkuk:hc,habacuque|zephaniah:sf,sofonias|haggai:ag,ageu|zechariah:zc,zacarias|malachi:ml,malaquias|matthew:mt,mateus|mark:mc,marcos|luke:lc,lucas|john:jo,joao|acts:at,atos|romans:rm,romanos|1 corinthians:1co,1corintios|2 corinthians:2co,2corintios|galatians:gl,galatas|ephesians:ef,efesios|philippians:fp,filipenses|colossians:cl,colossenses|1 thessalonians:1ts,1tessalonicenses|2 thessalonians:2ts,2tessalonicenses|1 timothy:1tm,1timoteo|2 timothy:2tm,2timoteo|titus:tt,tito|philemon:fm,filemom|hebrews:hb,hebreus|james:tg,tiago|1 peter:1pe,1pedro|2 peter:2pe,2pedro|1 john:1jo,1joao|2 john:2jo,2joao|3 john:3jo,3joao|jude:jd,judas|revelation:ap,apocalipse";
+const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "").toLowerCase();
+const MAP = {};
+BOOKS.split("|").forEach(b => { const [en, al] = b.split(":"); al.split(",").forEach(a => MAP[a] = en); });
+const RE = /((?:[1-3]\s?)?[A-Za-zÀ-ÿ]+)\.?\s(\d+):(\d+)(?:-(\d+))?/g;
+
+function findRefs(text = "") {
+  return [...text.matchAll(RE)].map(m => {
+    const en = MAP[norm(m[1])];
+    return en && { label: m[0], index: m.index, q: `${en} ${m[2]}:${m[3]}${m[4] ? "-" + m[4] : ""}` };
+  }).filter(Boolean);
+}
+function linkify(text = "", onRef) {
+  const out = []; let last = 0;
+  for (const r of findRefs(text)) {
+    out.push(text.slice(last, r.index));
+    out.push(html`<a key=${r.index} onClick=${() => onRef(r)}>${r.label}</a>`);
+    last = r.index + r.label.length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
+const vcache = {};
+async function fetchVerse(r) {
+  if (vcache[r.q]) return vcache[r.q];
+  const res = await fetch(`https://bible-api.com/${encodeURIComponent(r.q)}?translation=almeida`);
+  if (!res.ok) throw new Error();
+  const d = await res.json();
+  return vcache[r.q] = d.verses.map(v => `${v.verse} ${v.text.trim()}`).join(" ");
+}
+
+/* ---------- Pinça = tamanho da fonte ---------- */
+function usePinchZoom() {
+  useEffect(() => {
+    let scale = +localStorage.scale || 1, d0 = 0, s0 = 1;
+    const apply = () => document.documentElement.style.setProperty("--fs", scale);
+    const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const start = e => { if (e.touches.length === 2) { d0 = dist(e.touches); s0 = scale; } };
+    const move = e => { if (e.touches.length === 2 && d0) { e.preventDefault(); scale = Math.min(3, Math.max(0.7, s0 * dist(e.touches) / d0)); apply(); } };
+    const end = () => { if (d0) { d0 = 0; localStorage.scale = scale; } };
+    const block = e => e.preventDefault();
+    apply();
+    document.addEventListener("touchstart", start, { passive: false });
+    document.addEventListener("touchmove", move, { passive: false });
+    document.addEventListener("touchend", end);
+    document.addEventListener("gesturestart", block);
+    return () => {
+      document.removeEventListener("touchstart", start);
+      document.removeEventListener("touchmove", move);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("gesturestart", block);
+    };
+  }, []);
+}
+
+/* ---------- Cronômetro ---------- */
+const fmt = s => `${s < 0 ? "+" : ""}${Math.floor(Math.abs(s) / 60)}:${String(Math.abs(s) % 60).padStart(2, "0")}`;
+let actx;
+const beep = n => {
+  if (!actx) return;
+  for (let i = 0; i < n; i++) {
+    const o = actx.createOscillator(); o.connect(actx.destination);
+    o.start(actx.currentTime + i * 0.4); o.stop(actx.currentTime + i * 0.4 + 0.2);
+  }
+};
+let wake;
+const keepAwake = async () => { try { wake = await navigator.wakeLock?.request("screen"); } catch {} };
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wake) keepAwake(); });
+
+function Timer({ targetMin, setTarget, warnMin = 5 }) {
+  const [start, setStart] = useState(null);
+  const [acc, setAcc] = useState(0);
+  const [, tick] = useState(0);
+  const alerted = useRef({});
+  useEffect(() => {
+    if (!start) return;
+    const i = setInterval(() => tick(t => t + 1), 500);
+    return () => clearInterval(i);
+  }, [start]);
+  const elapsed = Math.floor((acc + (start ? Date.now() - start : 0)) / 1000);
+  const left = targetMin * 60 - elapsed;
+  const state = left < 0 ? "over" : left <= warnMin * 60 ? "warn" : "";
+  useEffect(() => {
+    if (state && !alerted.current[state]) {
+      alerted.current[state] = true;
+      beep(state === "over" ? 3 : 1);
+      navigator.vibrate?.(300);
+    }
+  }, [state]);
+  const toggle = () => {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume();
+    if (start) { setAcc(acc + Date.now() - start); setStart(null); }
+    else { setStart(Date.now()); keepAwake(); }
+  };
+  const reset = () => { setStart(null); setAcc(0); alerted.current = {}; };
+  return html`
+    <div className=${"timer " + state}>
+      <button className="clock" onClick=${toggle}>${start ? "❚❚" : "▶"} ${fmt(elapsed)}</button>
+      <small>${left >= 0 ? fmt(left) + " restantes" : fmt(left) + " excedido"}</small>
+      <select value=${targetMin} onChange=${e => setTarget(+e.target.value)}>
+        ${[10,15,20,25,30,40,45,50,60,90].map(m => html`<option key=${m} value=${m}>${m} min</option>`)}
+      </select>
+      <button onClick=${reset}>↺</button>
+    </div>`;
+}
+
+/* ---------- Tópicos ---------- */
+const uid = () => crypto.randomUUID();
+const newTopic = () => ({ id: uid(), title: "", content: "", collapsed: false, children: [] });
+const mapTree = (nodes, id, fn) => nodes.flatMap(n => n.id === id ? fn(n) : [{ ...n, children: mapTree(n.children, id, fn) }]);
+const grow = el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
+
+function Topic({ n, level, edit, preach, onRef }) {
+  const refs = findRefs(n.content);
+  const set = patch => edit(n.id, x => [{ ...x, ...patch }]);
+  return html`
+    <section className=${"topic l" + Math.min(level, 2)}>
+      <div className="thead">
+        <button className="chev" onClick=${() => set({ collapsed: !n.collapsed })}>${n.collapsed ? "▸" : "▾"}</button>
+        <input value=${n.title} placeholder=${level ? "Subtópico" : "Tópico"} readOnly=${preach}
+          onChange=${e => set({ title: e.target.value })} />
+        ${!preach && html`<button onClick=${() => confirm("Excluir tópico e todo seu conteúdo?") && edit(n.id, () => [])}>🗑</button>`}
+      </div>
+      ${!n.collapsed && html`
+        <div className="tbody">
+          ${preach
+            ? html`<p className="content">${linkify(n.content, onRef)}</p>`
+            : html`
+              <textarea ref=${grow} value=${n.content} placeholder="Escreva… (ex.: Jo 3:16)"
+                onChange=${e => { set({ content: e.target.value }); grow(e.target); }} />
+              ${refs.length > 0 && html`<div className="chips">${refs.map((r, i) => html`<button key=${i} onClick=${() => onRef(r)}>📖 ${r.label}</button>`)}</div>`}
+              ${level < 2 && html`<button className="add" onClick=${() => set({ children: [...n.children, newTopic()] })}>+ Subtópico</button>`}`}
+          ${n.children.map(c => html`<${Topic} key=${c.id} n=${c} level=${level + 1} edit=${edit} preach=${preach} onRef=${onRef} />`)}
+        </div>`}
+    </section>`;
+}
+
+/* ---------- Tela do sermão ---------- */
+function Sermon({ initial, save, back }) {
+  const [s, setS] = useState(initial);
+  const [preach, setPreach] = useState(false);
+  const [verse, setVerse] = useState(null);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    const t = setTimeout(() => save({ title: s.title, targetMin: s.targetMin, topics: s.topics }), 800);
+    return () => clearTimeout(t);
+  }, [s]);
+  const edit = (id, fn) => setS(p => ({ ...p, topics: mapTree(p.topics, id, fn) }));
+  const showRef = async r => {
+    setVerse({ ref: r.label, text: "Carregando…" });
+    try { setVerse({ ref: r.label, text: await fetchVerse(r) }); }
+    catch { setVerse({ ref: r.label, text: "Versículo não encontrado." }); }
+  };
+  return html`
+    <div>
+      <header className="bar">
+        <button onClick=${back}>‹</button>
+        <${Timer} targetMin=${s.targetMin} setTarget=${m => setS({ ...s, targetMin: m })} />
+        <button onClick=${() => setPreach(!preach)}>${preach ? "Editar" : "Pregar"}</button>
+      </header>
+      <main>
+        <input className="title" value=${s.title} readOnly=${preach} onChange=${e => setS({ ...s, title: e.target.value })} />
+        ${s.topics.map(t => html`<${Topic} key=${t.id} n=${t} level=${0} edit=${edit} preach=${preach} onRef=${showRef} />`)}
+        ${!preach && html`<button className="add" onClick=${() => setS({ ...s, topics: [...s.topics, newTopic()] })}>+ Tópico</button>`}
+      </main>
+      ${verse && html`
+        <div className="sheet" onClick=${() => setVerse(null)}>
+          <div onClick=${e => e.stopPropagation()}>
+            <h3>${verse.ref}</h3><p>${verse.text}</p>
+            <button className="primary" onClick=${() => setVerse(null)}>Fechar</button>
+          </div>
+        </div>`}
+    </div>`;
+}
+
+/* ---------- App ---------- */
+function App() {
+  const [user, setUser] = useState(undefined);
+  const [sermons, setSermons] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  usePinchZoom();
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, "users", user.uid, "sermons"), orderBy("updatedAt", "desc"));
+    return onSnapshot(q, snap => setSermons(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+  }, [user]);
+
+  if (user === undefined) return html`<p className="center">Carregando…</p>`;
+  if (!user) return html`
+    <div className="center">
+      <h1>Sermões</h1>
+      <button className="primary" onClick=${() => signInWithPopup(auth, provider).catch(e => alert(e.code))}>Entrar com Google</button>
+    </div>`;
+
+  const ref = id => doc(db, "users", user.uid, "sermons", id);
+  const open = sermons.find(s => s.id === openId);
+  if (open) return html`<${Sermon} key=${open.id} initial=${open} back=${() => setOpenId(null)}
+    save=${d => setDoc(ref(open.id), { ...d, updatedAt: Date.now() })} />`;
+
+  const create = () => {
+    const id = uid();
+    setDoc(ref(id), { title: "Novo sermão", targetMin: 30, topics: [newTopic()], updatedAt: Date.now() });
+    setOpenId(id);
+  };
+  return html`
+    <div>
+      <header className="bar"><h1>Sermões</h1><button onClick=${() => signOut(auth)}>Sair</button></header>
+      ${sermons.length === 0 && html`<p className="center" style=${{ minHeight: "50dvh" }}>Nenhum sermão ainda. Toque em ＋</p>`}
+      ${sermons.map(s => html`
+        <div key=${s.id} className="item" onClick=${() => setOpenId(s.id)}>
+          <div><b>${s.title}</b><small>${new Date(s.updatedAt).toLocaleDateString("pt-BR")}</small></div>
+          <button onClick=${e => { e.stopPropagation(); confirm("Excluir sermão?") && deleteDoc(ref(s.id)); }}>🗑</button>
+        </div>`)}
+      <button className="fab" onClick=${create}>＋</button>
+    </div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>
