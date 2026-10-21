@@ -35,6 +35,7 @@ main{max-width:60rem;margin:auto;padding:1rem 1rem 6rem}
 .title{font-size:1.8rem;font-weight:700;margin-bottom:.5rem}
 .topic{border-left:2px solid var(--line);margin:.4rem 0;padding-left:.4rem}
 .page{border-left:0;padding-left:0;margin:.8rem 0}
+.tblock{margin:.4rem 0}
 .thead{display:flex;align-items:center}
 .thead input{font-weight:700}
 .l0>.thead input{font-size:1.3rem}
@@ -126,9 +127,14 @@ async function fetchVerse(r, v) {
 
 /* ---------- Texto rico ---------- */
 const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const toHTML = (c = "") => /<[a-z!\/][^>]*>/i.test(c) ? c : esc(c).replace(/\n/g, "<br>");
+/* conteúdo marcado como HTML nunca é escapado de novo; legado é reparado e convertido */
+function toHTML(c = "", isHtml) {
+  if (isHtml) return c;
+  c = c.replace(/&(?:amp;)*nbsp;/g, " ").replace(/&(?:amp;)+(amp|lt|gt|quot);/g, "&$1;");
+  if (/<[a-z!\/][^>]*>/i.test(c) || /&(amp|lt|gt|quot|#\d+);/.test(c)) return c;
+  return esc(c).replace(/\n/g, "<br>");
+}
 
-/* transforma citações em botões dentro do próprio texto */
 function decorate(el) {
   const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nodes = [];
   while (w.nextNode()) if (!w.currentNode.parentElement.closest("a.ref")) nodes.push(w.currentNode);
@@ -150,12 +156,43 @@ function decorate(el) {
   return changed;
 }
 
-function Editor({ id, level, h, editable, onChange, onRef }) {
-  const el = useRef();
+/* ---------- Cursor / navegação ---------- */
+let focusReq = null;
+const EMPTY_TAIL = /(<div><br><\/div>|<p><br><\/p>|<br>)$/;
+const EMPTY_ALL = /^(<br>|<div><br><\/div>|<p><br><\/p>)$/;
+function placeCaret(el, atEnd = true) {
+  if (!el) return;
+  el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(!atEnd);
+  const g = getSelection(); g.removeAllRanges(); g.addRange(r);
+}
+function caretAt(el, end) {
+  const g = getSelection();
+  if (!g.rangeCount || !g.isCollapsed) return false;
+  const c = g.getRangeAt(0), t = document.createRange(); t.selectNodeContents(el);
+  end ? t.setStart(c.endContainer, c.endOffset) : t.setEnd(c.startContainer, c.startOffset);
+  const d = document.createElement("div"); d.append(t.cloneContents());
+  return !d.textContent.trim() && !d.querySelector("a,li");
+}
+const focusId = (id, atEnd) => placeCaret(document.querySelector(`.ed[data-id="${id}"]`), atEnd);
+
+function Editor({ id, level, kind = "topic", h, isHtml, editable, onChange, onRef, onKey, ph }) {
+  const el = useRef(), last = useRef();
   useEffect(() => {
-    const e = el.current, v = toHTML(h);
-    if (e.innerHTML !== v) { e.innerHTML = v; decorate(e); }
+    if (h === last.current) return;
+    const e = el.current;
+    e.innerHTML = toHTML(h, isHtml);
+    decorate(e);
+    last.current = h;
   }, [h]);
+  useEffect(() => { if (focusReq === id) { focusReq = null; placeCaret(el.current); } });
+  const emit = () => {
+    const e = el.current;
+    let v = e.innerHTML;
+    if (EMPTY_ALL.test(v)) { e.innerHTML = ""; v = ""; }
+    last.current = v;
+    onChange(v);
+  };
   const click = e => {
     const a = e.target.closest("a.ref");
     if (!a) return;
@@ -163,11 +200,12 @@ function Editor({ id, level, h, editable, onChange, onRef }) {
     const r = findRefs(a.textContent)[0];
     r && onRef(r);
   };
-  return html`<div ref=${el} className="ed" data-id=${id} data-level=${level}
-    data-ph="Escreva… (ex.: Jo 3:16). Selecione um trecho e use a barra acima."
+  return html`<div ref=${el} className="ed" data-id=${id} data-level=${level} data-kind=${kind}
+    data-ph=${ph || "Escreva… (ex.: Jo 3:16). Selecione um trecho e use a barra acima."}
     contentEditable=${editable} suppressContentEditableWarning=${true}
-    onInput=${e => onChange(e.currentTarget.innerHTML)}
-    onBlur=${e => { if (decorate(e.currentTarget)) onChange(e.currentTarget.innerHTML); }}
+    onInput=${emit}
+    onKeyDown=${e => onKey?.(e, el.current, emit)}
+    onBlur=${e => { if (decorate(e.currentTarget)) emit(); }}
     onClick=${click} />`;
 }
 
@@ -248,13 +286,40 @@ function Timer({ targetMin, setTarget, warnMin = 5 }) {
 
 /* ---------- Tópicos ---------- */
 const uid = () => crypto.randomUUID();
-const newTopic = (title = "", content = "") => ({ id: uid(), title, content, collapsed: false, children: [] });
-const mapTree = (nodes, id, fn) => nodes.flatMap(n => n.id === id ? fn(n) : [{ ...n, children: mapTree(n.children, id, fn) }]);
+const newTopic = (title = "", content = "") => ({ id: uid(), title, content, html: true, collapsed: false, children: [] });
+const newBlock = () => ({ id: uid(), type: "text", content: "", html: true, children: [] });
+const mapTree = (nodes, id, fn) => nodes.flatMap(n => n.id === id ? fn(n) : [{ ...n, children: mapTree(n.children || [], id, fn) }]);
+const findSib = (nodes, id) => {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].id === id) return { list: nodes, i };
+    const r = findSib(nodes[i].children || [], id);
+    if (r) return r;
+  }
+  return null;
+};
 const topicName = (t, i) => t.title || (i === 0 ? "Introdução" : "Sem título");
 
-function Topic({ n, level, edit, preach, onRef, num }) {
+function Topic({ n, level, edit, preach, onRef, num, nav }) {
   const page = num != null;
   const set = patch => edit(n.id, x => [{ ...x, ...patch }]);
+
+  /* subtópico: Enter em linha vazia no fim ou ↓ no fim -> sai para o bloco abaixo */
+  const subKey = (ev, el, emit) => {
+    if (page) return;
+    if (ev.key === "Enter" && !ev.shiftKey && caretAt(el, true) && (el.innerHTML === "" || EMPTY_TAIL.test(el.innerHTML))) {
+      ev.preventDefault();
+      el.innerHTML = el.innerHTML.replace(EMPTY_TAIL, "");
+      emit(); nav.exit(n.id);
+    } else if (ev.key === "ArrowDown" && caretAt(el, true)) {
+      ev.preventDefault(); nav.exit(n.id);
+    }
+  };
+  const blockKey = id => (ev, el) => {
+    if (ev.key === "Backspace" && !el.textContent && !el.querySelector("li")) { ev.preventDefault(); nav.remove(id); }
+    else if (ev.key === "ArrowUp" && caretAt(el, false)) { ev.preventDefault(); nav.up(id); }
+    else if (ev.key === "ArrowDown" && caretAt(el, true)) { if (nav.down(id)) ev.preventDefault(); }
+  };
+
   return html`
     <section className=${"topic l" + Math.min(level, 2) + (page ? " page" : "")}>
       <div className="thead">
@@ -268,9 +333,15 @@ function Topic({ n, level, edit, preach, onRef, num }) {
       </div>
       ${(page || !n.collapsed) && html`
         <div className="tbody">
-          <${Editor} id=${n.id} level=${level} h=${n.content} editable=${!preach}
-            onChange=${c => set({ content: c })} onRef=${onRef} />
-          ${n.children.map(c => html`<${Topic} key=${c.id} n=${c} level=${level + 1} edit=${edit} preach=${preach} onRef=${onRef} />`)}
+          <${Editor} id=${n.id} level=${level} h=${n.content} isHtml=${n.html} editable=${!preach}
+            onChange=${c => set({ content: c, html: true })} onRef=${onRef} onKey=${subKey} />
+          ${(n.children || []).map(c => c.type === "text"
+            ? html`<div key=${c.id} className="tblock">
+                <${Editor} id=${c.id} level=${level} kind="text" h=${c.content} isHtml=${true} editable=${!preach}
+                  ph="Continue escrevendo…" onRef=${onRef} onKey=${blockKey(c.id)}
+                  onChange=${v => edit(c.id, x => [{ ...x, content: v, html: true }])} />
+              </div>`
+            : html`<${Topic} key=${c.id} n=${c} level=${level + 1} edit=${edit} preach=${preach} onRef=${onRef} nav=${nav} />`)}
         </div>`}
     </section>`;
 }
@@ -298,7 +369,6 @@ function Sermon({ initial, save, back }) {
   }, [s]);
   useEffect(() => { window.scrollTo(0, 0); selRef.current = null; setHasSel(false); }, [P]);
 
-  /* guarda a última seleção feita no editor (sobrevive ao toque na barra, inclusive no iPhone) */
   useEffect(() => {
     const f = () => {
       const g = getSelection();
@@ -306,7 +376,7 @@ function Sermon({ initial, save, back }) {
       const r = g.getRangeAt(0), nd = r.commonAncestorContainer;
       const ed = (nd.nodeType === 1 ? nd : nd.parentElement)?.closest('.ed[contenteditable="true"]');
       if (!ed) return;
-      selRef.current = { id: ed.dataset.id, level: +ed.dataset.level, range: r.cloneRange() };
+      selRef.current = { id: ed.dataset.id, level: +ed.dataset.level, text: ed.dataset.kind === "text", range: r.cloneRange() };
       setHasSel(!!r.toString().trim());
     };
     document.addEventListener("selectionchange", f);
@@ -331,26 +401,49 @@ function Sermon({ initial, save, back }) {
   const edit = (id, fn) => setS(p => ({ ...p, topics: mapTree(p.topics, id, fn) }));
   const addTopic = () => { setS(p => ({ ...p, topics: [...p.topics, newTopic()] })); setPage(s.topics.length); };
 
-  /* trecho selecionado vira título; o que vem depois vira conteúdo do novo item */
+  /* navegação entre subtópicos e blocos de texto */
+  const nav = {
+    exit: id => {
+      const f = findSib(s.topics, id), nx = f?.list[f.i + 1];
+      if (nx) return focusId(nx.id, false);
+      const b = newBlock(); focusReq = b.id;
+      edit(id, x => [x, b]);
+    },
+    down: id => {
+      const f = findSib(s.topics, id), nx = f?.list[f.i + 1];
+      if (nx) { focusId(nx.id, false); return true; }
+      return false;
+    },
+    up: id => {
+      const f = findSib(s.topics, id), pv = f?.list[f.i - 1];
+      if (pv) focusId(pv.id, true);
+    },
+    remove: id => {
+      const f = findSib(s.topics, id), pv = f?.list[f.i - 1];
+      edit(id, () => []);
+      if (pv) setTimeout(() => focusId(pv.id, true));
+    }
+  };
+
   const fromSel = kind => {
     const sv = selRef.current, ed = restore();
-    const title = sv?.range.toString().trim();
+    const title = sv?.range.toString().replace(/\u00a0/g, " ").trim();
     if (!ed || !title) return alert("Selecione um trecho do texto.");
-    const part = (startNode, startOff, toEnd) => {
+    const part = (node, off, toEnd) => {
       const r = document.createRange(); r.selectNodeContents(ed);
-      toEnd ? r.setStart(startNode, startOff) : r.setEnd(startNode, startOff);
+      toEnd ? r.setStart(node, off) : r.setEnd(node, off);
       const d = document.createElement("div"); d.append(r.cloneContents());
       return d.innerHTML.replace(/^(\s|&nbsp;|<br>)+|(\s|&nbsp;|<br>)+$/g, "");
     };
     const before = part(sv.range.startContainer, sv.range.startOffset, false);
     const after = part(sv.range.endContainer, sv.range.endOffset, true);
     const nt = newTopic(title, after);
-    const split = x => ({ ...x, content: before });
+    const split = x => ({ ...x, content: before, html: true });
     if (kind === "topic") {
       setS(p => { const topics = mapTree(p.topics, sv.id, x => [split(x)]); topics.splice(P + 1, 0, nt); return { ...p, topics }; });
       setPage(P + 1);
     } else {
-      edit(sv.id, x => { const y = split(x); return sv.level < 2 ? [{ ...y, children: [nt, ...y.children] }] : [y, nt]; });
+      edit(sv.id, x => { const y = split(x); return !sv.text && sv.level < 2 ? [{ ...y, children: [nt, ...(y.children || [])] }] : [y, nt]; });
     }
     getSelection().removeAllRanges(); selRef.current = null; setHasSel(false);
   };
@@ -402,7 +495,7 @@ function Sermon({ initial, save, back }) {
         ${trail(indexed.slice(0, P))}
 
         ${cur
-          ? html`<${Topic} key=${cur.id} n=${cur} level=${0} num=${P} edit=${edit} preach=${preach} onRef=${r => showRef(r)} />`
+          ? html`<${Topic} key=${cur.id} n=${cur} level=${0} num=${P} edit=${edit} preach=${preach} onRef=${r => showRef(r)} nav=${nav} />`
           : html`<p style=${{ color: "var(--mut)" }}>Nenhum tópico ainda.</p>`}
 
         ${trail(indexed.slice(P + 1))}
