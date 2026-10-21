@@ -82,12 +82,13 @@ const BOOKS = "genesis:gn,genesis|exodus:ex,exodo|leviticus:lv,levitico|numbers:
 const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "").toLowerCase();
 const MAP = {};
 BOOKS.split("|").forEach(b => { const [en, al] = b.split(":"); al.split(",").forEach(a => MAP[a] = en); });
+const EN_LIST = BOOKS.split("|").map(b => b.split(":")[0]);
 const RE = /((?:[1-3]\s?)?[A-Za-zÀ-ÿ]+)\.?\s(\d+):(\d+)(?:-(\d+))?/g;
 
 function findRefs(text = "") {
   return [...text.matchAll(RE)].map(m => {
     const en = MAP[norm(m[1])];
-    return en && { label: m[0], index: m.index, q: `${en} ${m[2]}:${m[3]}${m[4] ? "-" + m[4] : ""}` };
+    return en && { label: m[0], index: m.index, en, ch: +m[2], v1: +m[3], v2: +(m[4] || m[3]) };
   }).filter(Boolean);
 }
 function linkify(text = "", onRef) {
@@ -100,13 +101,21 @@ function linkify(text = "", onRef) {
   out.push(text.slice(last));
   return out;
 }
-const vcache = {};
-async function fetchVerse(r) {
-  if (vcache[r.q]) return vcache[r.q];
-  const res = await fetch(`https://bible-api.com/${encodeURIComponent(r.q)}?translation=almeida`);
-  if (!res.ok) throw new Error();
-  const d = await res.json();
-  return vcache[r.q] = d.verses.map(v => `${v.verse} ${v.text.trim()}`).join(" ");
+
+const VERSIONS = { nvi: "NVI", acf: "ACF", aa: "AA" };
+const bibles = {};
+const loadBible = v => bibles[v] ||= fetch(`https://cdn.jsdelivr.net/gh/thiagobodruk/biblia@master/json/${v}.json`)
+  .then(r => { if (!r.ok) throw 0; return r.text(); })
+  .then(t => JSON.parse(t.replace(/^\uFEFF/, "")))
+  .catch(e => { delete bibles[v]; throw e; });
+
+async function fetchVerse(r, v) {
+  const b = await loadBible(v);
+  const ch = b[EN_LIST.indexOf(r.en)]?.chapters[r.ch - 1];
+  const out = [];
+  for (let i = r.v1; i <= r.v2; i++) if (ch?.[i - 1]) out.push(`${i} ${ch[i - 1]}`);
+  if (!out.length) throw 0;
+  return out.join(" ");
 }
 
 /* ---------- Pinça = tamanho da fonte ---------- */
@@ -220,6 +229,7 @@ function Sermon({ initial, save, back }) {
   const [s, setS] = useState(initial);
   const [preach, setPreach] = useState(false);
   const [verse, setVerse] = useState(null);
+  const [ver, setVer] = useState(localStorage.version || "nvi");
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
@@ -227,11 +237,12 @@ function Sermon({ initial, save, back }) {
     return () => clearTimeout(t);
   }, [s]);
   const edit = (id, fn) => setS(p => ({ ...p, topics: mapTree(p.topics, id, fn) }));
-  const showRef = async r => {
-    setVerse({ ref: r.label, text: "Carregando…" });
-    try { setVerse({ ref: r.label, text: await fetchVerse(r) }); }
-    catch { setVerse({ ref: r.label, text: "Versículo não encontrado." }); }
+  const showRef = async (r, v = ver) => {
+    setVerse({ r, text: "Carregando…" });
+    try { setVerse({ r, text: await fetchVerse(r, v) }); }
+    catch { setVerse({ r, text: "Versículo não encontrado." }); }
   };
+  const changeVer = v => { setVer(v); localStorage.version = v; showRef(verse.r, v); };
   return html`
     <div>
       <header className="bar">
@@ -241,13 +252,19 @@ function Sermon({ initial, save, back }) {
       </header>
       <main>
         <input className="title" value=${s.title} readOnly=${preach} onChange=${e => setS({ ...s, title: e.target.value })} />
-        ${s.topics.map(t => html`<${Topic} key=${t.id} n=${t} level=${0} edit=${edit} preach=${preach} onRef=${showRef} />`)}
+        ${s.topics.map(t => html`<${Topic} key=${t.id} n=${t} level=${0} edit=${edit} preach=${preach} onRef=${r => showRef(r)} />`)}
         ${!preach && html`<button className="add" onClick=${() => setS({ ...s, topics: [...s.topics, newTopic()] })}>+ Tópico</button>`}
       </main>
       ${verse && html`
         <div className="sheet" onClick=${() => setVerse(null)}>
           <div onClick=${e => e.stopPropagation()}>
-            <h3>${verse.ref}</h3><p>${verse.text}</p>
+            <h3>${verse.r.label}
+              <select style=${{ width: "auto", marginLeft: ".5rem", color: "var(--acc)" }}
+                value=${ver} onChange=${e => changeVer(e.target.value)}>
+                ${Object.entries(VERSIONS).map(([k, n]) => html`<option key=${k} value=${k}>${n}</option>`)}
+              </select>
+            </h3>
+            <p>${verse.text}</p>
             <button className="primary" onClick=${() => setVerse(null)}>Fechar</button>
           </div>
         </div>`}
