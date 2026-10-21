@@ -17,6 +17,7 @@ html{font-size:calc(17px * var(--fs,1))}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif}
 button{font:inherit;background:none;border:0;color:var(--acc);padding:.4rem .6rem;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:.3rem}
 button svg,.pick svg{width:1.15em;height:1.15em;flex:none}
+button:disabled{opacity:.45;cursor:default}
 input,select{font:inherit;color:inherit;background:none;border:0;outline:0;width:100%}
 .center{min-height:100dvh;display:grid;place-content:center;text-align:center;gap:1rem}
 .primary{background:var(--acc);color:#000;border-radius:.7rem;padding:.7rem 1.2rem;font-weight:600}
@@ -30,6 +31,8 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:0;width
 .pick select{width:auto;font-size:.85rem;color:var(--acc)}
 .item{display:flex;justify-content:space-between;align-items:center;padding:.8rem 1rem;border-bottom:1px solid var(--line);cursor:pointer}
 .item small{display:block;color:var(--mut);font-size:.8rem}
+.acts{display:flex;align-items:center;flex:none}
+.acts button{font-size:.8rem;padding:.4rem .5rem}
 .fab{position:fixed;right:1.2rem;bottom:calc(env(safe-area-inset-bottom) + 1.2rem);width:3.4rem;height:3.4rem;border-radius:50%;background:var(--acc);color:#000;font-size:1.6rem}
 main{max-width:60rem;margin:auto;padding:1rem 1rem 6rem}
 .title{font-size:1.8rem;font-weight:700;margin-bottom:.5rem}
@@ -66,6 +69,15 @@ main{max-width:60rem;margin:auto;padding:1rem 1rem 6rem}
 .sheet{position:fixed;inset:0;background:#0007;display:flex;align-items:flex-end;z-index:10}
 .sheet>div{background:var(--bg);width:100%;max-height:70dvh;overflow:auto;padding:1.2rem 1.2rem calc(env(safe-area-inset-bottom) + 1.2rem);border-radius:1rem 1rem 0 0;line-height:1.6}
 @media (min-width:768px){.sheet{justify-content:flex-end;align-items:stretch}.sheet>div{width:24rem;max-height:none;border-radius:0}}
+/* documento exportado em PDF */
+.pdfdoc{background:#fff;color:#1c1c1e;font-family:Georgia,serif;font-size:12pt;line-height:1.55;width:180mm;overflow-wrap:anywhere}
+.pdfdoc h1{font-size:22pt;margin:0 0 10pt}
+.pdfdoc h2{font-size:16pt;color:#b07d00;border-bottom:1px solid #ddd;padding-bottom:3pt;margin:16pt 0 6pt}
+.pdfdoc h3{font-size:13.5pt;margin:12pt 0 4pt}
+.pdfdoc h4,.pdfdoc h5,.pdfdoc h6{font-size:12pt;margin:10pt 0 4pt}
+.pdfdoc blockquote{margin:6pt 0;padding:6pt 10pt;background:#f2f2f7;color:#9a6e00;border-left:3px solid #e0a100;border-radius:4pt}
+.pdfdoc ul,.pdfdoc ol{padding-left:18pt;margin:4pt 0}
+.pdfdoc>div{margin:4pt 0}
 </style>
 </head>
 <body>
@@ -84,7 +96,7 @@ const firebaseConfig = {
 import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import htm from "https://esm.sh/htm@3.1.1";
-import { ChevronLeft, ChevronRight, ChevronDown, Play, Pause, RotateCcw, Trash2, Plus, LogOut, Heading1, Heading2, List, ListOrdered, Type, Palette, Highlighter, RemoveFormatting } from "https://esm.sh/lucide-react@0.454.0?deps=react@18.3.1";
+import { ChevronLeft, ChevronRight, ChevronDown, Play, Pause, RotateCcw, Trash2, Plus, LogOut, Heading1, Heading2, List, ListOrdered, Type, Palette, Highlighter, RemoveFormatting, FileText, FileDown } from "https://esm.sh/lucide-react@0.454.0?deps=react@18.3.1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, collection, doc, onSnapshot, orderBy, query, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -101,12 +113,16 @@ const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s
 const MAP = {};
 BOOKS.split("|").forEach(b => { const [en, al] = b.split(":"); al.split(",").forEach(a => MAP[a] = en); });
 const EN_LIST = BOOKS.split("|").map(b => b.split(":")[0]);
-const RE = /((?:[1-3]\s?)?[A-Za-zÀ-ÿ]+)\.?\s(\d+):(\d+)(?:-(\d+))?/g;
+/* aceita hífen, traço curto/longo e espaços: 2:6-9, 2:6 – 9, 2:6-3:2 */
+const RE = /((?:[1-3]\s?)?[A-Za-zÀ-ÿ]+)\.?\s(\d+)\s?:\s?(\d+)(?:\s?[-‐‑–—]\s?(?:(\d+)\s?:\s?)?(\d+))?/g;
 
 function findRefs(text = "") {
   return [...text.matchAll(RE)].map(m => {
     const en = MAP[norm(m[1])];
-    return en && { label: m[0], index: m.index, en, ch: +m[2], v1: +m[3], v2: +(m[4] || m[3]) };
+    if (!en) return null;
+    let ch = +m[2], v1 = +m[3], ch2 = m[4] ? +m[4] : ch, v2 = m[5] ? +m[5] : v1;
+    if (ch2 < ch || (ch2 === ch && v2 < v1)) [ch, v1, ch2, v2] = [ch2, v2, ch, v1];
+    return { label: m[0], index: m.index, en, ch, v1, ch2, v2 };
   }).filter(Boolean);
 }
 
@@ -119,16 +135,20 @@ const loadBible = v => bibles[v] ||= fetch(`https://cdn.jsdelivr.net/gh/thiagobo
 
 async function fetchVerse(r, v) {
   const b = await loadBible(v);
-  const ch = b[EN_LIST.indexOf(r.en)]?.chapters[r.ch - 1];
-  const out = [];
-  for (let i = r.v1; i <= r.v2; i++) if (ch?.[i - 1]) out.push(`${i} ${ch[i - 1]}`);
+  const book = b[EN_LIST.indexOf(r.en)];
+  const ch2 = r.ch2 ?? r.ch, multi = ch2 !== r.ch, out = [];
+  for (let c = r.ch; c <= ch2; c++) {
+    const ch = book?.chapters[c - 1];
+    if (!ch) continue;
+    const from = c === r.ch ? r.v1 : 1, to = c === ch2 ? r.v2 : ch.length;
+    for (let i = from; i <= to; i++) if (ch[i - 1]) out.push(`${multi ? c + ":" : ""}${i} ${ch[i - 1]}`);
+  }
   if (!out.length) throw 0;
   return out.join(" ");
 }
 
 /* ---------- Texto rico ---------- */
 const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-/* conteúdo marcado como HTML nunca é escapado de novo; legado é reparado e convertido */
 function toHTML(c = "", isHtml) {
   if (isHtml) return c;
   c = c.replace(/&(?:amp;)*nbsp;/g, " ").replace(/&(?:amp;)+(amp|lt|gt|quot);/g, "&$1;");
@@ -220,7 +240,7 @@ function Editor({ id, level, kind = "topic", h, isHtml, editable, onChange, onRe
     r && onRef(r);
   };
   return html`<div ref=${el} className="ed" data-id=${id} data-level=${level} data-kind=${kind}
-    data-ph=${ph || "Escreva… (ex.: Jo 3:16 ou _Jo 3:16). Selecione um trecho e use a barra acima."}
+    data-ph=${ph || "Escreva… (ex.: Jo 3:16 ou _Jo 3:16-18). Selecione um trecho e use a barra acima."}
     contentEditable=${editable} suppressContentEditableWarning=${true}
     onInput=${emit}
     onKeyDown=${e => onKey?.(e, el.current, emit)}
@@ -322,7 +342,6 @@ function Topic({ n, level, edit, preach, onRef, num, nav }) {
   const page = num != null;
   const set = patch => edit(n.id, x => [{ ...x, ...patch }]);
 
-  /* subtópico: Enter em linha vazia no fim ou ↓ no fim -> sai para o bloco abaixo */
   const subKey = (ev, el, emit) => {
     if (page) return;
     if (ev.key === "Enter" && !ev.shiftKey && caretAt(el, true) && (el.innerHTML === "" || EMPTY_TAIL.test(el.innerHTML))) {
@@ -420,7 +439,6 @@ function Sermon({ initial, save, back }) {
   const edit = (id, fn) => setS(p => ({ ...p, topics: mapTree(p.topics, id, fn) }));
   const addTopic = () => { setS(p => ({ ...p, topics: [...p.topics, newTopic()] })); setPage(s.topics.length); };
 
-  /* navegação entre subtópicos e blocos de texto */
   const nav = {
     exit: id => {
       const f = findSib(s.topics, id), nx = f?.list[f.i + 1];
@@ -541,11 +559,112 @@ function Sermon({ initial, save, back }) {
     </div>`;
 }
 
+/* ---------- Exportação ---------- */
+const fileName = (s, ext) => {
+  const base = (s.title || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return `${base || "sermao"}.${ext}`;
+};
+
+/* monta um documento limpo (sem botões/edição) a partir da árvore do sermão */
+function buildDoc(s) {
+  const root = document.createElement("div");
+  const add = (tag, text) => { const e = document.createElement(tag); e.textContent = text; root.append(e); };
+  add("h1", s.title || "Sermão sem título");
+  const body = (h, isHtml) => {
+    const d = document.createElement("div");
+    d.innerHTML = toHTML(h || "", isHtml);
+    d.querySelectorAll("script,style,iframe").forEach(e => e.remove());
+    d.querySelectorAll("[contenteditable]").forEach(e => e.removeAttribute("contenteditable"));
+    d.querySelectorAll("a.ref").forEach(a => a.replaceWith(a.textContent));
+    d.querySelectorAll(".vq").forEach(sp => {
+      const q = document.createElement("blockquote");
+      q.textContent = sp.dataset.ok ? sp.textContent : (sp.dataset.ref || sp.textContent);
+      sp.replaceWith(q);
+    });
+    if (d.textContent.trim() || d.querySelector("li,blockquote")) root.append(d);
+  };
+  const walk = (list, lvl) => list.forEach((n, i) => {
+    if (n.type === "text") return body(n.content, true);
+    add("h" + Math.min(lvl + 2, 6), lvl === 0 ? `${i}. ${topicName(n, i)}` : (n.title || "Subtópico"));
+    body(n.content, n.html);
+    walk(n.children || [], lvl + 1);
+  });
+  walk(s.topics || [], 0);
+  return root;
+}
+
+/* HTML -> Markdown */
+const wrapMd = (m, s) => s.trim() ? s.replace(/^(\s*)([\s\S]*?)(\s*)$/, `$1${m}$2${m}$3`) : s;
+function toMd(node) {
+  let out = "";
+  for (const c of node.childNodes) {
+    if (c.nodeType === 3) { out += c.data.replace(/\u00a0/g, " ").replace(/([*_`\\])/g, "\\$1"); continue; }
+    if (c.nodeType !== 1) continue;
+    const t = c.tagName, st = c.style || {};
+    if (/^H[1-6]$/.test(t)) out += `\n\n${"#".repeat(+t[1])} ${c.textContent.trim()}\n\n`;
+    else if (t === "BR") out += "  \n";
+    else if (t === "BLOCKQUOTE") out += "\n\n" + toMd(c).trim().split("\n").map(l => "> " + l).join("\n") + "\n\n";
+    else if (t === "UL" || t === "OL") {
+      let i = 1;
+      out += "\n\n" + [...c.children].filter(li => li.tagName === "LI")
+        .map(li => (t === "OL" ? `${i++}. ` : "- ") + toMd(li).trim().replace(/\n+/g, "\n   ")).join("\n") + "\n\n";
+    }
+    else if (t === "DIV" || t === "P") out += "\n" + toMd(c) + "\n";
+    else if (t === "B" || t === "STRONG" || /bold|[6-9]00/.test(st.fontWeight)) out += wrapMd("**", toMd(c));
+    else if (t === "I" || t === "EM" || st.fontStyle === "italic") out += wrapMd("*", toMd(c));
+    else if (t === "MARK" || (st.backgroundColor && st.backgroundColor !== "transparent")) {
+      const x = toMd(c); out += x.trim() ? `<mark>${x}</mark>` : x;
+    }
+    else out += toMd(c);
+  }
+  return out;
+}
+
+function download(blob, name) {
+  const u = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = u; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 2000);
+}
+
+const isEmpty = s => !(s.topics || []).length;
+
+function exportMd(s) {
+  const md = toMd(buildDoc(s)).replace(/[ \t]+\n/g, m => m.endsWith("  \n") ? m : "\n")
+    .replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  download(new Blob([md], { type: "text/markdown;charset=utf-8" }), fileName(s, "md"));
+}
+
+/* html2pdf.js carregado sob demanda via CDN */
+let h2p;
+const loadH2P = () => h2p ||= new Promise((ok, err) => {
+  if (window.html2pdf) return ok(window.html2pdf);
+  const sc = document.createElement("script");
+  sc.src = "https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js";
+  sc.onload = () => window.html2pdf ? ok(window.html2pdf) : err();
+  sc.onerror = () => { h2p = null; sc.remove(); err(); };
+  document.head.append(sc);
+});
+
+async function exportPdf(s) {
+  const lib = await loadH2P();
+  const root = buildDoc(s); root.className = "pdfdoc";
+  await lib().set({
+    margin: 15,
+    filename: fileName(s, "pdf"),
+    image: { type: "jpeg", quality: 0.95 },
+    html2canvas: { scale: 2, backgroundColor: "#ffffff", useCORS: true },
+    jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+    pagebreak: { mode: ["css", "legacy"], avoid: ["h2", "h3", "h4", "li", "blockquote"] }
+  }).from(root).save();
+}
+
 /* ---------- App ---------- */
 function App() {
   const [user, setUser] = useState(undefined);
   const [sermons, setSermons] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [busy, setBusy] = useState(null);
   usePinchZoom();
   useEffect(() => onAuthStateChanged(auth, setUser), []);
   useEffect(() => {
@@ -571,14 +690,35 @@ function App() {
     setDoc(ref(id), { title: "Novo sermão", targetMin: 30, topics: [newTopic("Introdução")], updatedAt: Date.now() });
     setOpenId(id);
   };
+
+  const doExport = async (e, s, kind) => {
+    e.stopPropagation();
+    if (busy) return;
+    if (isEmpty(s)) return alert("Este sermão não tem conteúdo para exportar.");
+    setBusy(s.id + kind);
+    try {
+      if (kind === "pdf") await exportPdf(s); else exportMd(s);
+    } catch {
+      alert(kind === "pdf"
+        ? "Não foi possível gerar o PDF. Verifique sua conexão com a internet e tente novamente."
+        : "Não foi possível gerar o arquivo Markdown.");
+    } finally { setBusy(null); }
+  };
+
   return html`
     <div>
       <header className="bar"><h1>Sermões</h1><button onClick=${() => signOut(auth)}><${LogOut} /> Sair</button></header>
       ${sermons.length === 0 && html`<p className="center" style=${{ minHeight: "50dvh" }}>Nenhum sermão ainda. Toque em +</p>`}
       ${sermons.map(s => html`
         <div key=${s.id} className="item" onClick=${() => setOpenId(s.id)}>
-          <div><b>${s.title}</b><small>${new Date(s.updatedAt).toLocaleDateString("pt-BR")}</small></div>
-          <button aria-label="Excluir" onClick=${e => { e.stopPropagation(); confirm("Excluir sermão?") && deleteDoc(ref(s.id)); }}><${Trash2} /></button>
+          <div><b>${s.title || "Sermão sem título"}</b><small>${new Date(s.updatedAt).toLocaleDateString("pt-BR")}</small></div>
+          <div className="acts">
+            <button aria-label="Exportar PDF" disabled=${!!busy} onClick=${e => doExport(e, s, "pdf")}>
+              <${FileDown} /> ${busy === s.id + "pdf" ? "Gerando…" : "PDF"}</button>
+            <button aria-label="Exportar Markdown" disabled=${!!busy} onClick=${e => doExport(e, s, "md")}>
+              <${FileText} /> MD</button>
+            <button aria-label="Excluir" onClick=${e => { e.stopPropagation(); confirm("Excluir sermão?") && deleteDoc(ref(s.id)); }}><${Trash2} /></button>
+          </div>
         </div>`)}
       <button className="fab" onClick=${create} aria-label="Novo sermão"><${Plus} /></button>
     </div>`;
