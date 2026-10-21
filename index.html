@@ -48,8 +48,9 @@ main{max-width:60rem;margin:auto;padding:1rem 1rem 6rem}
 .ed:empty::before{content:attr(data-ph);color:var(--mut)}
 .ed[contenteditable="false"]:empty::before{content:""}
 .ed ul,.ed ol{padding-left:1.4rem;margin:.3rem 0}
-a.ref{color:var(--acc);background:var(--card);border-radius:.4rem;padding:0 .3rem;white-space:nowrap;cursor:pointer;text-decoration:none}
-a.ref::before{content:"";display:inline-block;width:.9em;height:.9em;margin-right:.25em;vertical-align:-.1em;background:currentColor;-webkit-mask:var(--book) center/contain no-repeat;mask:var(--book) center/contain no-repeat}
+.ref{color:var(--acc);background:var(--card);border-radius:.4rem;padding:0 .3rem;white-space:nowrap;cursor:pointer;text-decoration:none}
+.ref::before{content:"";display:inline-block;width:.9em;height:.9em;margin-right:.25em;vertical-align:-.1em;background:currentColor;-webkit-mask:var(--book) center/contain no-repeat;mask:var(--book) center/contain no-repeat}
+.vq{white-space:normal;cursor:text;-webkit-box-decoration-break:clone;box-decoration-break:clone;line-height:1.6}
 :root{--book:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z'/%3E%3Cpath d='M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'/%3E%3C/svg%3E")}
 .trail{display:flex;flex-direction:column}
 .trail button{justify-content:flex-start;color:var(--mut);border-bottom:1px solid var(--line);padding:.5rem 0;text-align:left}
@@ -135,24 +136,41 @@ function toHTML(c = "", isHtml) {
   return esc(c).replace(/\n/g, "<br>");
 }
 
-function decorate(el) {
+/* _Ref => versículo no texto; Ref => botão */
+const pending = new WeakSet();
+function fillQuote(sp, done) {
+  const r = findRefs(sp.dataset.ref)[0];
+  if (!r || pending.has(sp)) return;
+  pending.add(sp);
+  fetchVerse(r, localStorage.version || "nvi")
+    .then(t => { sp.textContent = `“${t}” ${r.label}`; sp.dataset.ok = "1"; })
+    .catch(() => { sp.textContent = `${r.label} (versículo não encontrado)`; })
+    .finally(() => { pending.delete(sp); if (sp.isConnected) done?.(); });
+}
+
+function decorate(el, done) {
   const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nodes = [];
-  while (w.nextNode()) if (!w.currentNode.parentElement.closest("a.ref")) nodes.push(w.currentNode);
+  while (w.nextNode()) if (!w.currentNode.parentElement.closest(".ref")) nodes.push(w.currentNode);
   let changed = false;
   for (const t of nodes) {
     const refs = findRefs(t.data);
     if (!refs.length) continue;
     const frag = document.createDocumentFragment(); let last = 0;
     for (const r of refs) {
-      frag.append(t.data.slice(last, r.index));
-      const a = document.createElement("a");
-      a.className = "ref"; a.contentEditable = "false"; a.textContent = r.label;
-      frag.append(a);
+      const quote = t.data[r.index - 1] === "_";
+      frag.append(t.data.slice(last, quote ? r.index - 1 : r.index));
+      const node = document.createElement(quote ? "span" : "a");
+      node.className = quote ? "ref vq" : "ref";
+      node.contentEditable = "false";
+      if (quote) { node.dataset.ref = r.label; node.textContent = "Carregando…"; }
+      else node.textContent = r.label;
+      frag.append(node);
       last = r.index + r.label.length;
     }
     frag.append(t.data.slice(last));
     t.replaceWith(frag); changed = true;
   }
+  el.querySelectorAll(".vq:not([data-ok])").forEach(sp => fillQuote(sp, done));
   return changed;
 }
 
@@ -172,7 +190,7 @@ function caretAt(el, end) {
   const c = g.getRangeAt(0), t = document.createRange(); t.selectNodeContents(el);
   end ? t.setStart(c.endContainer, c.endOffset) : t.setEnd(c.startContainer, c.startOffset);
   const d = document.createElement("div"); d.append(t.cloneContents());
-  return !d.textContent.trim() && !d.querySelector("a,li");
+  return !d.textContent.trim() && !d.querySelector("a,li,.ref");
 }
 const focusId = (id, atEnd) => placeCaret(document.querySelector(`.ed[data-id="${id}"]`), atEnd);
 
@@ -182,12 +200,13 @@ function Editor({ id, level, kind = "topic", h, isHtml, editable, onChange, onRe
     if (h === last.current) return;
     const e = el.current;
     e.innerHTML = toHTML(h, isHtml);
-    decorate(e);
+    decorate(e, emit);
     last.current = h;
   }, [h]);
   useEffect(() => { if (focusReq === id) { focusReq = null; placeCaret(el.current); } });
   const emit = () => {
     const e = el.current;
+    if (!e) return;
     let v = e.innerHTML;
     if (EMPTY_ALL.test(v)) { e.innerHTML = ""; v = ""; }
     last.current = v;
@@ -201,11 +220,11 @@ function Editor({ id, level, kind = "topic", h, isHtml, editable, onChange, onRe
     r && onRef(r);
   };
   return html`<div ref=${el} className="ed" data-id=${id} data-level=${level} data-kind=${kind}
-    data-ph=${ph || "Escreva… (ex.: Jo 3:16). Selecione um trecho e use a barra acima."}
+    data-ph=${ph || "Escreva… (ex.: Jo 3:16 ou _Jo 3:16). Selecione um trecho e use a barra acima."}
     contentEditable=${editable} suppressContentEditableWarning=${true}
     onInput=${emit}
     onKeyDown=${e => onKey?.(e, el.current, emit)}
-    onBlur=${e => { if (decorate(e.currentTarget)) emit(); }}
+    onBlur=${e => { if (decorate(e.currentTarget, emit)) emit(); }}
     onClick=${click} />`;
 }
 
